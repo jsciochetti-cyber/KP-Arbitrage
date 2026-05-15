@@ -6,5 +6,5 @@ redis[hiredis]==5.2.1
 httpx==0.28.1
 websockets==14.1
 pydantic-settings==2.6.1
-rapidfuzz==3.10.1
+thefuzz==0.22.1
 python-dateutil==2.9.0.post0

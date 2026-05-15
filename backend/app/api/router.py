@@ -8,7 +8,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel, Field
-from rapidfuzz import fuzz
+from thefuzz import fuzz
 from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 

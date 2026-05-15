@@ -3,7 +3,7 @@ from __future__ import annotations
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from rapidfuzz import fuzz
+from thefuzz import fuzz
 
 from app.db.models import KalshiMarket, MarketPair, PolyMarket
 
