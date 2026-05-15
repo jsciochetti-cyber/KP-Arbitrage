@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import random
 from decimal import Decimal
 
 import httpx
@@ -30,17 +31,53 @@ class KalshiClient:
     def __init__(self) -> None:
         self.base = settings.kalshi_base_url.rstrip("/")
 
+    async def _get_with_429_backoff(
+        self,
+        client: httpx.AsyncClient,
+        url: str,
+        *,
+        params: dict[str, str | int] | None = None,
+    ) -> httpx.Response:
+        """GET with Retry-After / exponential backoff on HTTP 429."""
+        delay = settings.kalshi_429_base_backoff_seconds
+        last: httpx.Response | None = None
+        for attempt in range(settings.kalshi_429_max_retries):
+            r = await client.get(url, params=params, timeout=45.0)
+            last = r
+            if r.status_code != 429:
+                r.raise_for_status()
+                return r
+            ra = r.headers.get("Retry-After")
+            if ra:
+                try:
+                    wait = float(ra)
+                except ValueError:
+                    wait = delay
+            else:
+                wait = delay + random.uniform(0, 0.5)
+            wait = max(0.5, min(wait, 60.0))
+            log.warning(
+                "Kalshi rate limited (429), sleeping %.1fs before retry %s/%s url=%s",
+                wait,
+                attempt + 1,
+                settings.kalshi_429_max_retries,
+                url[:72],
+            )
+            await asyncio.sleep(wait)
+            delay = min(delay * 2.0, 30.0)
+        assert last is not None
+        last.raise_for_status()
+        return last
+
     async def fetch_markets_page(self, client: httpx.AsyncClient, cursor: str | None = None) -> dict:
         params: dict[str, str | int] = {"limit": 200, "status": "open"}
         if cursor:
             params["cursor"] = cursor
-        r = await client.get(f"{self.base}/markets", params=params, timeout=30.0)
-        r.raise_for_status()
+        r = await self._get_with_429_backoff(client, f"{self.base}/markets", params=params)
         return r.json()
 
     async def fetch_orderbook(self, client: httpx.AsyncClient, ticker: str) -> dict:
-        r = await client.get(f"{self.base}/markets/{ticker}/orderbook", timeout=30.0)
-        r.raise_for_status()
+        r = await self._get_with_429_backoff(client, f"{self.base}/markets/{ticker}/orderbook")
         return r.json()
 
     @staticmethod
@@ -77,9 +114,19 @@ class KalshiClient:
         """Pull open markets (paginated) and enrich top-N with orderbooks."""
         out: list[dict] = []
         cursor: str | None = None
+        max_pages = max(1, settings.kalshi_markets_max_pages)
+        page_delay = max(0.0, settings.kalshi_page_delay_seconds)
         async with httpx.AsyncClient() as client:
-            for _ in range(25):
-                data = await self.fetch_markets_page(client, cursor)
+            for page_idx in range(max_pages):
+                if page_idx > 0 and page_delay:
+                    await asyncio.sleep(page_delay)
+                try:
+                    data = await self.fetch_markets_page(client, cursor)
+                except httpx.HTTPStatusError as e:
+                    if e.response is not None and e.response.status_code == 429:
+                        log.warning("Kalshi markets pagination stopped on 429 after %s pages", page_idx)
+                        break
+                    raise
                 markets = data.get("markets") or []
                 for m in markets:
                     ticker = m.get("ticker")
@@ -106,11 +153,15 @@ class KalshiClient:
         out.sort(key=lambda x: (x.get("volume") or 0), reverse=True)
         trimmed = out[: settings.max_kalshi_markets]
 
+        ob_delay = max(0.0, settings.kalshi_orderbook_backoff_seconds)
+        conc = max(1, settings.kalshi_orderbook_concurrency)
         async with httpx.AsyncClient() as client:
-            sem = asyncio.Semaphore(8)
+            sem = asyncio.Semaphore(conc)
 
             async def enrich(row: dict) -> None:
                 async with sem:
+                    if ob_delay:
+                        await asyncio.sleep(ob_delay)
                     try:
                         ob = await self.fetch_orderbook(client, row["ticker"])
                         yb2, ya2 = self._best_yes_from_orderbook(ob)
@@ -118,6 +169,11 @@ class KalshiClient:
                             row["yes_bid"] = yb2
                         if ya2 is not None:
                             row["yes_ask"] = ya2
+                    except httpx.HTTPStatusError as e:
+                        if e.response is not None and e.response.status_code == 429:
+                            log.debug("kalshi orderbook 429 %s", row.get("ticker"))
+                        else:
+                            log.debug("kalshi orderbook %s: %s", row.get("ticker"), e)
                     except Exception as e:  # noqa: BLE001
                         log.debug("kalshi orderbook %s: %s", row.get("ticker"), e)
 

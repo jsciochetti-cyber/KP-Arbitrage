@@ -250,6 +250,14 @@ class IngestionService:
 
                 await r.set("cache:k_rows", json.dumps(k_rows[:400]), ex=120)
                 await r.set("cache:p_rows", json.dumps(p_rows[:400]), ex=120)
+            except httpx.HTTPStatusError as e:
+                if e.response is not None and e.response.status_code == 429:
+                    log.warning(
+                        "ingestion cycle skipped (Kalshi or upstream 429): %s",
+                        e.request.url,
+                    )
+                else:
+                    log.exception("ingestion cycle error: %s", e)
             except Exception as e:  # noqa: BLE001
                 log.exception("ingestion cycle error: %s", e)
 

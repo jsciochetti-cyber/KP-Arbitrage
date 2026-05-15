@@ -15,9 +15,16 @@ class Settings(BaseSettings):
 
     cors_origins: str = "http://localhost:3000"
 
-    kalshi_poll_seconds: float = 15.0
+    kalshi_poll_seconds: float = 30.0
     poly_gamma_refresh_seconds: float = 120.0
     max_kalshi_markets: int = 150
+    # Kalshi public API rate limits — tune to avoid 429s (see ingestion/kalshi.py)
+    kalshi_markets_max_pages: int = 10
+    kalshi_page_delay_seconds: float = 0.35
+    kalshi_orderbook_concurrency: int = 3
+    kalshi_orderbook_backoff_seconds: float = 0.08
+    kalshi_429_max_retries: int = 8
+    kalshi_429_base_backoff_seconds: float = 2.0
     max_poly_markets: int = 80
     whale_min_usd: float = 500.0
 
