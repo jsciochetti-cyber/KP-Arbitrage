@@ -5,6 +5,7 @@ import Link from "next/link";
 export const metadata: Metadata = {
   title: "Kalshi × Polymarket Arb",
   description: "Internal arbitrage scanner + paper trading",
+  icons: { icon: "/favicon.svg" },
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
@@ -15,7 +16,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           <header className="border-b border-zinc-800 bg-zinc-950/80 backdrop-blur sticky top-0 z-10">
             <div className="mx-auto max-w-7xl px-4 py-3 flex items-center justify-between gap-4">
               <Link href="/" className="font-semibold tracking-tight">
-                Kalshi × Poly <span className="text-zinc-400 font-normal">Arb</span>
+                Kalshi × Polymarket Arb
               </Link>
               <nav className="flex flex-wrap gap-3 text-sm text-zinc-300">
                 <Link className="hover:text-white" href="/scanner">

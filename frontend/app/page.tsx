@@ -7,7 +7,7 @@ export default function HomePage() {
         <h1 className="text-2xl font-semibold">Internal arbitrage console</h1>
         <p className="mt-2 text-zinc-400 max-w-2xl">
           Live ingestion from Kalshi + Polymarket, fuzzy cross-venue matching, spread ranking, paper P&amp;L, and whale
-          prints. Start the stack with <code className="text-zinc-200">docker compose up --build</code>.
+          prints. Locally: <code className="text-zinc-200">docker compose up --build</code>. Production: Render worker + API.
         </p>
       </div>
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">

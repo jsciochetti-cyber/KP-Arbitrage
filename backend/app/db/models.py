@@ -129,6 +129,7 @@ class WhaleTrade(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     venue: Mapped[Venue] = mapped_column(VenueColumn)
+    external_id: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
     market_ref: Mapped[str] = mapped_column(String(256))
     side: Mapped[str] = mapped_column(String(16), default="")
     size_usd: Mapped[float] = mapped_column(Float)

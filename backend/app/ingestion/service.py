@@ -9,7 +9,7 @@ from typing import Any
 
 import httpx
 import redis.asyncio as redis
-from sqlalchemy import select
+from sqlalchemy import and_, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -147,12 +147,23 @@ class IngestionService:
                     usd = abs(px * cnt)
                     if usd < settings.whale_min_usd:
                         continue
-                    side = tr.get("taker_outcome_side") or tr.get("taker_side") or ""
+                    ext_id = str(tr.get("trade_id") or "")
+                    if ext_id:
+                        dup = await session.execute(
+                            select(WhaleTrade.id).where(
+                                and_(WhaleTrade.venue == Venue.kalshi, WhaleTrade.external_id == ext_id)
+                            ).limit(1)
+                        )
+                        if dup.scalar_one_or_none():
+                            continue
+                    side_raw = tr.get("taker_outcome_side") or tr.get("taker_side") or ""
+                    side = _normalize_side(Venue.kalshi, str(side_raw))
                     wt = WhaleTrade(
                         id=uuid.uuid4(),
                         venue=Venue.kalshi,
+                        external_id=ext_id or None,
                         market_ref=t,
-                        side=str(side),
+                        side=side,
                         size_usd=usd,
                         price=px,
                         recorded_at=_parse_dt(tr.get("created_time")) or datetime.now(UTC),
@@ -178,11 +189,23 @@ class IngestionService:
             return
         m = self._poly_by_token.get(asset) or {}
         cid = m.get("condition_id") or asset
+        side_raw = str(payload.get("side") or "")
+        ts = payload.get("timestamp") or payload.get("match_time") or ""
+        ext_id = str(payload.get("id") or payload.get("trade_id") or f"{asset}:{ts}:{side_raw}:{price}:{size}")
+        dup = await session.execute(
+            select(WhaleTrade.id).where(
+                and_(WhaleTrade.venue == Venue.polymarket, WhaleTrade.external_id == ext_id)
+            ).limit(1)
+        )
+        if dup.scalar_one_or_none():
+            return
+        side = _normalize_side(Venue.polymarket, side_raw)
         wt = WhaleTrade(
             id=uuid.uuid4(),
             venue=Venue.polymarket,
+            external_id=ext_id,
             market_ref=cid,
-            side=str(payload.get("side") or ""),
+            side=side,
             size_usd=usd,
             price=price,
             recorded_at=datetime.now(UTC),
@@ -248,8 +271,10 @@ class IngestionService:
                 await r.set("arb:opportunities", json.dumps(opps), ex=120)
                 await r.publish("arb_updates", json.dumps({"ts": datetime.now(UTC).isoformat(), "n": len(opps)}))
 
+                ts = datetime.now(UTC).isoformat()
                 await r.set("cache:k_rows", json.dumps(k_rows[:400]), ex=120)
                 await r.set("cache:p_rows", json.dumps(p_rows[:400]), ex=120)
+                await r.set("cache:ingestion_ts", ts, ex=120)
             except httpx.HTTPStatusError as e:
                 if e.response is not None and e.response.status_code == 429:
                     log.warning(
@@ -269,6 +294,17 @@ class IngestionService:
 
     def stop(self) -> None:
         self._stop.set()
+
+
+def _normalize_side(venue: Venue, side: str) -> str:
+    s = (side or "").strip()
+    if not s:
+        return ""
+    if venue == Venue.kalshi:
+        return s.upper()
+    if venue == Venue.polymarket:
+        return s.upper()
+    return s
 
 
 def _parse_dt(v: Any) -> datetime | None:

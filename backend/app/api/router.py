@@ -111,13 +111,19 @@ async def search_markets(
     p_res = await session.execute(select(PolyMarket).limit(800))
     k_hits: list[tuple[float, KalshiMarket]] = []
     for km in k_res.scalars():
-        score = float(fuzz.partial_ratio(ql, (km.title or "").lower()))
-        if score >= 60:
+        title = (km.title or "").lower()
+        if not title:
+            continue
+        score = float(fuzz.token_set_ratio(ql, title))
+        if score >= 75:
             k_hits.append((score, km))
     p_hits: list[tuple[float, PolyMarket]] = []
     for pm in p_res.scalars():
-        score = float(fuzz.partial_ratio(ql, (pm.question or "").lower()))
-        if score >= 60:
+        question = (pm.question or "").lower()
+        if not question:
+            continue
+        score = float(fuzz.token_set_ratio(ql, question))
+        if score >= 75:
             p_hits.append((score, pm))
     k_hits.sort(key=lambda x: x[0], reverse=True)
     p_hits.sort(key=lambda x: x[0], reverse=True)
@@ -156,8 +162,15 @@ async def volume_dashboard(request: Request) -> dict[str, Any]:
     p_vol = sum(float(x.get("volume_24h") or 0) for x in p_rows)
     top_k = sorted(k_rows, key=lambda x: float(x.get("volume") or 0), reverse=True)[:15]
     top_p = sorted(p_rows, key=lambda x: float(x.get("volume_24h") or 0), reverse=True)[:15]
+    cache_ts = await r.get("cache:ingestion_ts")
     return {
-        "totals": {"kalshi_open_interest_volume_sum": k_vol, "polymarket_24h_volume_sum": p_vol, "ratio_kalshi_to_poly": (k_vol / p_vol) if p_vol else None},
+        "updated_at": cache_ts,
+        "totals": {
+            "kalshi_volume_sum": k_vol,
+            "polymarket_24h_volume_sum": p_vol,
+            "ratio_kalshi_to_poly": (k_vol / p_vol) if p_vol else None,
+            "kalshi_open_interest_volume_sum": k_vol,
+        },
         "top_kalshi": [{"ticker": x.get("ticker"), "title": x.get("title"), "volume": x.get("volume")} for x in top_k],
         "top_polymarket": [
             {"condition_id": x.get("condition_id"), "question": x.get("question"), "volume_24h": x.get("volume_24h")}
@@ -179,14 +192,33 @@ async def list_whales(
         .order_by(desc(WhaleTrade.recorded_at))
         .limit(limit)
     )
+    trades = list(res.scalars())
+    k_refs = {w.market_ref for w in trades if w.venue.value == "kalshi"}
+    p_refs = {w.market_ref for w in trades if w.venue.value == "polymarket"}
+    k_titles: dict[str, str] = {}
+    p_titles: dict[str, str] = {}
+    if k_refs:
+        k_res = await session.execute(select(KalshiMarket).where(KalshiMarket.ticker.in_(k_refs)))
+        for km in k_res.scalars():
+            k_titles[km.ticker] = km.title or km.ticker
+    if p_refs:
+        p_res = await session.execute(select(PolyMarket).where(PolyMarket.condition_id.in_(p_refs)))
+        for pm in p_res.scalars():
+            p_titles[pm.condition_id] = pm.question or pm.condition_id
+
     rows = []
-    for w in res.scalars():
+    for w in trades:
+        if w.venue.value == "kalshi":
+            market_title = k_titles.get(w.market_ref, w.market_ref)
+        else:
+            market_title = p_titles.get(w.market_ref, w.market_ref)
         rows.append(
             {
                 "id": str(w.id),
                 "venue": w.venue.value,
                 "market_ref": w.market_ref,
-                "side": w.side,
+                "market_title": market_title,
+                "side": w.side or "",
                 "size_usd": w.size_usd,
                 "price": w.price,
                 "recorded_at": w.recorded_at.isoformat(),

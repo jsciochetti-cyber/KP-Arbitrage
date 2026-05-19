@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 
-import { apiGet, wsUrl } from "@/lib/api";
+import { apiGet, parseApiError, wsUrl } from "@/lib/api";
 
 type ArbRow = {
   pair_id: string;
@@ -23,6 +23,7 @@ type ArbRow = {
 export default function ScannerPage() {
   const [rows, setRows] = useState<ArbRow[]>([]);
   const [err, setErr] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
 
   const refresh = async () => {
     try {
@@ -30,7 +31,9 @@ export default function ScannerPage() {
       setRows(data);
       setErr(null);
     } catch (e) {
-      setErr((e as Error).message);
+      setErr(parseApiError(e));
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -52,15 +55,10 @@ export default function ScannerPage() {
           // ignore
         }
       };
-      ws.onerror = () => {
-        // handled by polling
-      };
     } catch {
       // ignore
     }
-    return () => {
-      ws?.close();
-    };
+    return () => ws?.close();
   }, []);
 
   const sorted = useMemo(() => [...rows].sort((a, b) => (b.spread_pct ?? 0) - (a.spread_pct ?? 0)), [rows]);
@@ -71,7 +69,7 @@ export default function ScannerPage() {
         <div>
           <h1 className="text-xl font-semibold">Arbitrage scanner</h1>
           <p className="text-sm text-zinc-400 mt-1">
-            Ranked by cross-venue mid spread. Updates via WebSocket (2s) + REST fallback.
+            Ranked by cross-venue mid spread. REST polling (8s) + WebSocket push.
           </p>
         </div>
         <button
@@ -84,18 +82,22 @@ export default function ScannerPage() {
 
       {err ? <div className="text-sm text-red-400">Backend: {err}</div> : null}
 
-      <div className="overflow-auto rounded-xl border border-zinc-800">
-        <table className="min-w-[1100px] w-full text-sm">
+      {loading && sorted.length === 0 ? (
+        <div className="animate-pulse rounded-xl border border-zinc-800 h-48 bg-zinc-900/50" />
+      ) : null}
+
+      <div className="overflow-x-auto rounded-xl border border-zinc-800">
+        <table className="w-full text-sm">
           <thead className="text-left text-zinc-400 border-b border-zinc-800">
             <tr>
               <th className="p-3">Pair</th>
-              <th className="p-3">Kalshi</th>
-              <th className="p-3">Polymarket</th>
+              <th className="p-3 hidden sm:table-cell">Kalshi</th>
+              <th className="p-3 hidden sm:table-cell">Polymarket</th>
               <th className="p-3">Spread %</th>
-              <th className="p-3">Edge</th>
-              <th className="p-3">RT edge</th>
-              <th className="p-3">Vol K / Vol P</th>
-              <th className="p-3">Match</th>
+              <th className="p-3 hidden md:table-cell">Edge</th>
+              <th className="p-3 hidden md:table-cell">RT edge</th>
+              <th className="p-3 hidden lg:table-cell">Vol</th>
+              <th className="p-3 hidden lg:table-cell">Match</th>
             </tr>
           </thead>
           <tbody>
@@ -105,29 +107,29 @@ export default function ScannerPage() {
                   <Link className="text-blue-300 hover:underline" href={`/market/${r.pair_id}`}>
                     Drill in
                   </Link>
-                  <div className="text-xs text-zinc-500 mt-1 font-mono">{r.pair_id}</div>
+                  <div className="text-xs text-zinc-500 mt-1 font-mono truncate max-w-[140px]">{r.pair_id}</div>
                 </td>
-                <td className="p-3">
+                <td className="p-3 hidden sm:table-cell">
                   <div className="font-mono text-xs text-zinc-300">{r.kalshi_ticker}</div>
                   <div className="text-zinc-400 line-clamp-2">{r.title_k}</div>
                 </td>
-                <td className="p-3">
-                  <div className="font-mono text-xs text-zinc-300">{r.poly_condition_id}</div>
+                <td className="p-3 hidden sm:table-cell">
+                  <div className="font-mono text-xs text-zinc-300 truncate max-w-[120px]">{r.poly_condition_id}</div>
                   <div className="text-zinc-400 line-clamp-2">{r.title_p}</div>
                 </td>
                 <td className="p-3 tabular-nums">{r.spread_pct?.toFixed(2)}</td>
-                <td className="p-3 tabular-nums">{r.implied_edge?.toFixed(4)}</td>
-                <td className="p-3 tabular-nums">{r.round_trip_edge?.toFixed(4)}</td>
-                <td className="p-3 tabular-nums text-xs">
+                <td className="p-3 tabular-nums hidden md:table-cell">{r.implied_edge?.toFixed(4)}</td>
+                <td className="p-3 tabular-nums hidden md:table-cell">{r.round_trip_edge?.toFixed(4)}</td>
+                <td className="p-3 tabular-nums text-xs hidden lg:table-cell">
                   {Number(r.volume_kalshi || 0).toFixed(0)} / {Number(r.volume_poly_24h || 0).toFixed(0)}
                 </td>
-                <td className="p-3 text-xs text-zinc-400">{r.arb_type}</td>
+                <td className="p-3 text-xs text-zinc-400 hidden lg:table-cell">{r.arb_type}</td>
               </tr>
             ))}
-            {sorted.length === 0 ? (
+            {!loading && sorted.length === 0 ? (
               <tr>
                 <td className="p-6 text-zinc-500" colSpan={8}>
-                  No opportunities yet. Wait for ingestion cycle (check backend logs / docker compose).
+                  No opportunities yet. Ensure the ingestion worker is running on Render.
                 </td>
               </tr>
             ) : null}

@@ -14,6 +14,8 @@ class Settings(BaseSettings):
     poly_subgraph_url: str | None = None
 
     cors_origins: str = "http://localhost:3000"
+    # Set true on Render Web Service when a separate Background Worker runs ingestion
+    disable_ingestion: bool = False
 
     kalshi_poll_seconds: float = 30.0
     poly_gamma_refresh_seconds: float = 120.0

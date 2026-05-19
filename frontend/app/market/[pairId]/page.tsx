@@ -14,7 +14,7 @@ import {
   YAxis,
 } from "recharts";
 
-import { apiGet } from "@/lib/api";
+import { apiGet, parseApiError } from "@/lib/api";
 
 type ArbRow = {
   pair_id: string;
@@ -22,10 +22,10 @@ type ArbRow = {
   poly_condition_id: string;
   title_k?: string;
   title_p?: string;
-  kalshi_yes_bid: number;
-  kalshi_yes_ask: number;
-  poly_yes_bid: number;
-  poly_yes_ask: number;
+  kalshi_yes_bid?: number;
+  kalshi_yes_ask?: number;
+  poly_yes_bid?: number;
+  poly_yes_ask?: number;
 };
 
 type SpreadRow = { recorded_at: string; spread_pct: number; best_edge: number | null };
@@ -38,19 +38,43 @@ export default function MarketPage() {
   const [spreads, setSpreads] = useState<SpreadRow[]>([]);
   const [hist, setHist] = useState<HistRow[]>([]);
   const [err, setErr] = useState<string | null>(null);
+  const [spreadNote, setSpreadNote] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
 
   const load = async () => {
+    setErr(null);
+    setSpreadNote(null);
     try {
       const all = await apiGet<ArbRow[]>("/v1/arb");
       const row = all.find((x) => x.pair_id === pairId) || null;
       setArb(row);
+    } catch (e) {
+      setErr(parseApiError(e));
+    }
+
+    try {
       const s = await apiGet<SpreadRow[]>(`/v1/spreads/${pairId}?limit=500`);
       setSpreads([...s].reverse());
+    } catch (e) {
+      const msg = parseApiError(e);
+      if (msg.includes("422") || msg.includes("Invalid")) {
+        setSpreadNote("No spread history yet — data will appear after a few ingestion cycles.");
+        setSpreads([]);
+      } else {
+        setErr((prev) => prev || msg);
+      }
+    }
+
+    try {
       const h = await apiGet<HistRow[]>(`/v1/history/${pairId}?limit=5000`);
       setHist([...h].reverse());
-      setErr(null);
     } catch (e) {
-      setErr((e as Error).message);
+      const msg = parseApiError(e);
+      if (!msg.includes("422")) {
+        setErr((prev) => prev || msg);
+      }
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -87,7 +111,7 @@ export default function MarketPage() {
       <div className="flex items-center justify-between gap-4">
         <div>
           <div className="text-sm text-zinc-400">
-            <Link href="/scanner" className="hover:underline">
+            <Link href="/scanner" className="hover:underline text-blue-300">
               Scanner
             </Link>{" "}
             / Market
@@ -95,12 +119,17 @@ export default function MarketPage() {
           <h1 className="text-xl font-semibold mt-1">Market differences</h1>
           <p className="text-xs text-zinc-500 font-mono mt-2">{pairId}</p>
         </div>
-        <button className="text-sm rounded-lg border border-zinc-700 px-3 py-2 hover:bg-zinc-900" onClick={load}>
+        <button
+          type="button"
+          className="text-sm rounded-lg border border-zinc-700 px-3 py-2 hover:bg-zinc-900"
+          onClick={load}
+        >
           Refresh
         </button>
       </div>
 
       {err ? <div className="text-sm text-red-400">{err}</div> : null}
+      {loading && !arb ? <div className="animate-pulse rounded-xl border border-zinc-800 h-24 bg-zinc-900/50" /> : null}
 
       {arb ? (
         <div className="grid gap-4 lg:grid-cols-2">
@@ -123,49 +152,58 @@ export default function MarketPage() {
             </div>
           </div>
         </div>
-      ) : (
+      ) : !loading ? (
         <div className="text-sm text-zinc-500">
-          No live snapshot for this pair in <code>/v1/arb</code> yet. Open a pair id from the scanner table.
+          No live snapshot for this pair in <code>/v1/arb</code> yet. Open a pair from the scanner table.
         </div>
-      )}
+      ) : null}
 
       <div className="rounded-xl border border-zinc-800 p-4 h-[320px]">
         <div className="text-sm text-zinc-400 mb-3">Spread history (%)</div>
-        <ResponsiveContainer width="100%" height="100%">
-          <LineChart data={spreads}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#27272a" />
-            <XAxis dataKey="recorded_at" tick={{ fill: "#a1a1aa", fontSize: 10 }} minTickGap={24} />
-            <YAxis tick={{ fill: "#a1a1aa", fontSize: 10 }} />
-            <Tooltip contentStyle={{ background: "#09090b", border: "1px solid #27272a" }} />
-            <Legend />
-            <Line type="monotone" dataKey="spread_pct" name="spread %" stroke="#60a5fa" dot={false} strokeWidth={2} />
-          </LineChart>
-        </ResponsiveContainer>
+        {spreadNote ? <p className="text-xs text-zinc-500 mb-2">{spreadNote}</p> : null}
+        {spreads.length === 0 && !spreadNote ? (
+          <p className="text-xs text-zinc-500">No spread points recorded for this pair yet.</p>
+        ) : (
+          <ResponsiveContainer width="100%" height="90%">
+            <LineChart data={spreads}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#27272a" />
+              <XAxis dataKey="recorded_at" tick={{ fill: "#a1a1aa", fontSize: 10 }} minTickGap={24} />
+              <YAxis tick={{ fill: "#a1a1aa", fontSize: 10 }} />
+              <Tooltip contentStyle={{ background: "#09090b", border: "1px solid #27272a" }} />
+              <Legend />
+              <Line type="monotone" dataKey="spread_pct" name="spread %" stroke="#60a5fa" dot={false} strokeWidth={2} />
+            </LineChart>
+          </ResponsiveContainer>
+        )}
       </div>
 
       <div className="rounded-xl border border-zinc-800 p-4 h-[320px]">
         <div className="text-sm text-zinc-400 mb-3">YES mids (sampled ticks)</div>
-        <ResponsiveContainer width="100%" height="100%">
-          <LineChart data={midsSeries}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#27272a" />
-            <XAxis dataKey="t" tick={{ fill: "#a1a1aa", fontSize: 10 }} minTickGap={24} />
-            <YAxis domain={[0, 1]} tick={{ fill: "#a1a1aa", fontSize: 10 }} />
-            <Tooltip contentStyle={{ background: "#09090b", border: "1px solid #27272a" }} />
-            <Legend />
-            <Line type="monotone" dataKey="k" name="kalshi mid" stroke="#34d399" dot={false} strokeWidth={2} />
-            <Line type="monotone" dataKey="p" name="poly mid" stroke="#fbbf24" dot={false} strokeWidth={2} />
-          </LineChart>
-        </ResponsiveContainer>
+        {midsSeries.length === 0 ? (
+          <p className="text-xs text-zinc-500">No price ticks yet for this pair.</p>
+        ) : (
+          <ResponsiveContainer width="100%" height="90%">
+            <LineChart data={midsSeries}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#27272a" />
+              <XAxis dataKey="t" tick={{ fill: "#a1a1aa", fontSize: 10 }} minTickGap={24} />
+              <YAxis domain={[0, 1]} tick={{ fill: "#a1a1aa", fontSize: 10 }} />
+              <Tooltip contentStyle={{ background: "#09090b", border: "1px solid #27272a" }} />
+              <Legend />
+              <Line type="monotone" dataKey="k" name="kalshi mid" stroke="#34d399" dot={false} strokeWidth={2} />
+              <Line type="monotone" dataKey="p" name="poly mid" stroke="#fbbf24" dot={false} strokeWidth={2} />
+            </LineChart>
+          </ResponsiveContainer>
+        )}
       </div>
     </div>
   );
 }
 
-function Stat({ label, v }: { label: string; v: number }) {
+function Stat({ label, v }: { label: string; v?: number }) {
   return (
     <div className="rounded-lg bg-zinc-900/40 border border-zinc-800 p-3">
       <div className="text-xs text-zinc-500">{label}</div>
-      <div className="tabular-nums mt-1">{Number(v).toFixed(4)}</div>
+      <div className="tabular-nums mt-1">{v == null ? "—" : Number(v).toFixed(4)}</div>
     </div>
   );
 }

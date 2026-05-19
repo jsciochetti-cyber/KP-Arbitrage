@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 
-import { apiGet } from "@/lib/api";
+import { apiGet, parseApiError } from "@/lib/api";
 
 type SearchResp = {
   query: string;
@@ -11,23 +11,30 @@ type SearchResp = {
 };
 
 export default function SearchPage() {
-  const [q, setQ] = useState("election");
+  const [q, setQ] = useState("");
   const [data, setData] = useState<SearchResp | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
 
   const canSearch = useMemo(() => q.trim().length >= 2, [q]);
 
   useEffect(() => {
-    if (!canSearch) return;
+    if (!canSearch) {
+      setData(null);
+      return;
+    }
+    setLoading(true);
     const t = window.setTimeout(async () => {
       try {
         const r = await apiGet<SearchResp>(`/v1/search?q=${encodeURIComponent(q.trim())}`);
         setData(r);
         setErr(null);
       } catch (e) {
-        setErr((e as Error).message);
+        setErr(parseApiError(e));
+      } finally {
+        setLoading(false);
       }
-    }, 250);
+    }, 300);
     return () => window.clearTimeout(t);
   }, [q, canSearch]);
 
@@ -45,6 +52,7 @@ export default function SearchPage() {
         placeholder="Type at least 2 characters…"
       />
 
+      {loading ? <div className="text-sm text-zinc-500">Searching…</div> : null}
       {err ? <div className="text-sm text-red-400">{err}</div> : null}
 
       <div className="grid gap-4 lg:grid-cols-2">
@@ -63,6 +71,9 @@ export default function SearchPage() {
                 </div>
               </div>
             ))}
+            {canSearch && !loading && (data?.kalshi?.length ?? 0) === 0 ? (
+              <div className="p-4 text-sm text-zinc-500">No Kalshi matches above threshold.</div>
+            ) : null}
           </div>
         </div>
 
@@ -78,6 +89,9 @@ export default function SearchPage() {
                 <div className="mt-2 text-sm">{x.question}</div>
               </div>
             ))}
+            {canSearch && !loading && (data?.polymarket?.length ?? 0) === 0 ? (
+              <div className="p-4 text-sm text-zinc-500">No Polymarket matches above threshold.</div>
+            ) : null}
           </div>
         </div>
       </div>

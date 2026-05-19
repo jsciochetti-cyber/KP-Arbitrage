@@ -1,5 +1,4 @@
 import asyncio
-import json
 import logging
 from contextlib import asynccontextmanager
 
@@ -12,35 +11,11 @@ from app.config import settings
 from app.db.models import Base
 from app.db.session import engine
 from app.db.setup_timescale import ensure_timescale
-from app.ingestion.polymarket import PolymarketClient
 from app.ingestion.service import IngestionService
+from app.ingestion.ws_runner import run_poly_ws_loop
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger(__name__)
-
-
-async def run_poly_ws(app: FastAPI) -> None:
-    poly = PolymarketClient()
-    while True:
-        try:
-            r = app.state.redis
-            raw = await r.get("cache:p_rows")
-            tokens: list[str] = []
-            if raw:
-                for row in json.loads(raw):
-                    t = row.get("token_yes")
-                    if t:
-                        tokens.append(str(t))
-            if not tokens:
-                await asyncio.sleep(10)
-                continue
-            svc: IngestionService = app.state.ingest
-            await poly.ws_best_bid_ask_loop(tokens[:60], svc.on_poly_ws)
-        except asyncio.CancelledError:
-            raise
-        except Exception as e:  # noqa: BLE001
-            log.warning("poly ws runner: %s", e)
-            await asyncio.sleep(5)
 
 
 @asynccontextmanager
@@ -50,10 +25,15 @@ async def lifespan(app: FastAPI):
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     await ensure_timescale(engine)
-    tasks = [
-        asyncio.create_task(app.state.ingest.run_loop(), name="ingestion"),
-        asyncio.create_task(run_poly_ws(app), name="poly_ws"),
-    ]
+    tasks: list[asyncio.Task[None]] = []
+    if not settings.disable_ingestion:
+        tasks = [
+            asyncio.create_task(app.state.ingest.run_loop(), name="ingestion"),
+            asyncio.create_task(run_poly_ws_loop(app.state.redis, app.state.ingest), name="poly_ws"),
+        ]
+        log.info("Ingestion tasks started in API process")
+    else:
+        log.info("Ingestion disabled in API process (use worker.py)")
     app.state.tasks = tasks
     try:
         yield

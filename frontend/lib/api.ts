@@ -28,3 +28,18 @@ export function wsUrl(): string {
   u.protocol = u.protocol === "https:" ? "wss:" : "ws:";
   return `${u.origin.replace(/\/$/, "")}/v1/ws`;
 }
+
+/** Map fetch errors to short user-facing messages. */
+export function parseApiError(e: unknown): string {
+  const msg = e instanceof Error ? e.message : String(e);
+  const m = msg.match(/failed:\s*(\d{3})/);
+  const status = m ? Number(m[1]) : 0;
+  if (status === 422) return "Invalid input — check the pair ID or parameters.";
+  if (status === 400) return "Bad request — missing pair or prices.";
+  if (status === 404) return "Not found.";
+  if (status >= 500) return "Backend error — try again shortly.";
+  if (msg.toLowerCase().includes("failed to fetch") || msg.toLowerCase().includes("network")) {
+    return "Cannot reach the API — check NEXT_PUBLIC_API_URL and CORS.";
+  }
+  return msg;
+}

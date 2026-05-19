@@ -42,6 +42,20 @@ docker compose up --build
    npm run dev
    ```
 
+## Render deployment (production)
+
+1. **Web Service** (API): `uvicorn app.main:app --host 0.0.0.0 --port $PORT`  
+   - Set `DATABASE_URL`, `REDIS_URL`, `CORS_ORIGINS=https://your-app.vercel.app`  
+   - Set `DISABLE_INGESTION=true` so only the worker runs polling  
+
+2. **Background Worker**: start command `python worker.py` (root: `backend/`)  
+   - Same `DATABASE_URL` and `REDIS_URL`  
+   - Do **not** set `DISABLE_INGESTION`  
+
+3. **Vercel** (frontend): `NEXT_PUBLIC_API_URL=https://your-api.onrender.com`  
+
+If you add new DB columns (e.g. `whale_trades.external_id`), run a migration on Supabase or recreate tables in dev.
+
 ## Notes
 
 - Kalshi public REST is used for markets + orderbooks (no API key required for read-only market data).
